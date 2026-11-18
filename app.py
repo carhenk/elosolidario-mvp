@@ -1,32 +1,17 @@
-from datetime import datetime, timedelta, date
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+from datetime import timedelta, date
+from flask import Flask, render_template_string
 from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
-import os
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'chave-dev-elosolidario')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///elosolidario.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///elosolidario.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
 db = SQLAlchemy(app)
 
-class Usuario(db.Model):
-    __tablename__ = 'usuarios'
-    id = db.Column(db.Integer, primary_key=True)
-    nome = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    senha_hash = db.Column(db.String(255), nullable=False)
-    perfil = db.Column(db.String(20), nullable=False, default='voluntario')
-    ativo = db.Column(db.Boolean, default=True)
-
 class ItemEstoque(db.Model):
-    __tablename__ = 'itens_estoque'
     id = db.Column(db.Integer, primary_key=True)
     nome_item = db.Column(db.String(100), nullable=False)
-    categoria = db.Column(db.String(50), nullable=False)
-    quantidade_atual = db.Column(db.Integer, nullable=False, default=0)
-    quantidade_minima = db.Column(db.Integer, nullable=False, default=5)
+    quantidade_atual = db.Column(db.Integer, default=0)
+    quantidade_minima = db.Column(db.Integer, default=5)
     data_validade = db.Column(db.Date, nullable=True)
 
     @property
@@ -35,41 +20,75 @@ class ItemEstoque(db.Model):
 
     @property
     def validade_proxima(self):
-        if not self.data_validade:
-            return False
-        return (self.data_validade - date.today()).days <= 7
+        return self.data_validade and (self.data_validade - date.today()).days <= 7
 
 class Familia(db.Model):
-    __tablename__ = 'familias'
     id = db.Column(db.Integer, primary_key=True)
-    nome_responsavel = db.Column(db.String(120), nullable=False)
-    documento_cpf = db.Column(db.String(14), unique=True, nullable=False)
-    bairro_endereco = db.Column(db.String(150), nullable=False)
-    qtd_dependentes = db.Column(db.Integer, nullable=False, default=1)
+    nome = db.Column(db.String(120), nullable=False)
+    bairro = db.Column(db.String(100), nullable=False)
+    bloqueada_30d = db.Column(db.Boolean, default=False)
 
-class Entrega(db.Model):
-    __tablename__ = 'entregas'
-    id = db.Column(db.Integer, primary_key=True)
-    familia_id = db.Column(db.Integer, db.ForeignKey('familias.id'), nullable=False)
-    usuario_id = db.Column(db.Integer, db.ForeignKey('usuarios.id'), nullable=False)
-    data_entrega = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    itens_resumo = db.Column(db.Text, nullable=False)
+CSS = """
+body{font-family:system-ui,sans-serif;background:#f4f6f9;color:#222;margin:0}
+nav{background:#198754;color:#fff;padding:14px 24px;display:flex;
+justify-content:space-between;align-items:center}
+.btn{padding:6px 12px;border:0;border-radius:6px;font-weight:700;cursor:pointer}
+.btn-y{background:#ffc107;color:#000}.btn-w{background:#fff;color:#198754}
+.wrap{max-width:1050px;margin:20px auto;padding:0 16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+.grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
+.card{background:#fff;border-radius:10px;padding:16px;box-shadow:0 2px 6px #0001}
+.num{font-size:2rem;font-weight:800;margin:4px 0 0}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+.bg{padding:4px 8px;border-radius:12px;font-size:.8rem;font-weight:700;color:#fff}
+.r{background:#dc3545}.y{background:#ffc107;color:#000}.g{background:#198754}.s{background:#6c757d}
+body.hc{background:#000;color:#FFD700}
+body.hc .card{background:#111;color:#FFD700;border:2px solid #FFD700}
+body.hc th,body.hc td{border-color:#444}
+body.lg{font-size:1.22rem}
+"""
 
-def pode_receber_cesta(familia_id):
-    limite = datetime.utcnow() - timedelta(days=30)
-    ultima = Entrega.query.filter(
-        Entrega.familia_id == familia_id,
-        Entrega.data_entrega >= limite
-    ).first()
-    return ultima is None
+HTML = """<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>EloSolidário — Gestão Comunitária (ODS 2)</title>
+<style>""" + CSS + """</style></head><body>
+<nav><strong>🤝 EloSolidário | ODS 2 — Fome Zero</strong>
+<div><button class="btn btn-y" onclick="document.body.classList.toggle('hc')">
+🌓 Alto Contraste</button>
+<button class="btn btn-w" onclick="document.body.classList.toggle('lg')">
+🔠 A+ Fonte</button></div></nav>
+<div class="wrap"><div class="grid3">
+<div class="card"><small>Famílias Atendidas</small>
+<p class="num" style="color:#198754">{{ familias|length }}</p></div>
+<div class="card"><small>Itens em Estoque Crítico</small>
+<p class="num" style="color:#dc3545">{{ urgentes|length }}</p></div>
+<div class="card"><small>Cestas Entregues (Mês)</small>
+<p class="num" style="color:#0d6efd">14</p></div></div>
+<div class="grid2"><div class="card">
+<strong>📦 Controle de Estoque (Operador: Ana - Coord.)</strong>
+<table><tr><th>Alimento</th><th>Saldo</th><th>Validade</th><th>Status</th></tr>
+{% for i in itens %}<tr><td>{{ i.nome_item }}</td><td>{{ i.quantidade_atual }} un.</td>
+<td>{{ i.data_validade.strftime('%d/%m/%Y') if i.data_validade else '—' }}</td><td>
+{% if i.estoque_critico %}<span class="bg r">Estoque Crítico</span>
+{% elif i.validade_proxima %}<span class="bg y">Vence em breve</span>
+{% else %}<span class="bg g">Normal</span>{% endif %}</td></tr>{% endfor %}
+</table></div><div><div class="card" style="margin-bottom:16px;border-left:5px solid #ffc107">
+<strong>📢 Lista de Urgências (WhatsApp)</strong><ul>{% for u in urgentes %}
+<li><b>{{ u.nome_item }}</b> (restam {{ u.quantidade_atual }} un.)</li>{% endfor %}
+</ul></div><div class="card"><strong>👨‍👩‍👧‍👦 Famílias e Trava 30 Dias</strong><ul>
+{% for f in familias %}<li>{{ f.nome }} ({{ f.bairro }}) —
+{% if f.bloqueada_30d %}<span class="bg s">Bloqueio 30d</span>
+{% else %}<span class="bg g">Liberada</span>{% endif %}</li>{% endfor %}
+</ul></div></div></div></div></body></html>"""
 
 @app.route('/')
 def index():
     itens = ItemEstoque.query.all()
     urgentes = [i for i in itens if i.estoque_critico]
-    return {"status": "online", "projeto": "EloSolidario", "itens_urgentes": len(urgentes)}
+    familias = Familia.query.all()
+    return render_template_string(HTML, itens=itens, urgentes=urgentes, familias=familias)
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(debug=False)
+    app.run(host='0.0.0.0', port=5000, debug=False)
