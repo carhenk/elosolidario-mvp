@@ -92,3 +92,16 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=False)
+
+with app.app_context():
+    db.create_all()
+    if ItemEstoque.query.count() == 0:
+        db.session.add_all([
+            ItemEstoque(nome_item="Arroz Tipo 1 (5kg)", quantidade_atual=3, quantidade_minima=8, data_validade=date.today()+timedelta(days=90)),
+            ItemEstoque(nome_item="Feijão Carioca (1kg)", quantidade_atual=4, quantidade_minima=10, data_validade=date.today()+timedelta(days=60)),
+            ItemEstoque(nome_item="Leite Integral (1L)", quantidade_atual=18, quantidade_minima=6, data_validade=date.today()+timedelta(days=4)),
+            ItemEstoque(nome_item="Óleo de Soja (900ml)", quantidade_atual=22, quantidade_minima=8, data_validade=date.today()+timedelta(days=120)),
+            Familia(nome="Maria Oliveira Santos", bairro="Jardim Esperança", bloqueada_30d=True),
+            Familia(nome="José Carlos Pereira", bairro="Vila Nova", bloqueada_30d=False)
+        ])
+        db.session.commit()
